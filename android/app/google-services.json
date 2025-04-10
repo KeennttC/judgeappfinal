@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "178430968967",
+    "project_id": "judgeappfinal",
+    "storage_bucket": "judgeappfinal.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:178430968967:android:8a173cf47019ef79196422",
+        "android_client_info": {
+          "package_name": "com.example.judgeappfinal"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCtcIOuOdr8SZ7-4aP-91ehu3to_THFGDE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
