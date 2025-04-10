@@ -93,16 +93,31 @@ class LoginScreen extends StatelessWidget {
       final email = emailController.text.trim();
       final password = passwordController.text.trim();
 
+      // Check if the role is Admin and validate credentials
+      if (role == 'Admin') {
+        if (email != 'ndkc@gmail.com' || password != 'ndkc12345') {
+          throw Exception('Invalid admin credentials');
+        }
+      }
+
+      // Perform Firebase Authentication
       final userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
 
-      // Navigate to MainPage
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => MainPage(role: role)),
-      );
+      // Navigate to the appropriate landing page based on the role
+      if (role == 'Admin') {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const AdminLandingPage()),
+        );
+      } else if (role == 'Judge') {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const JudgeLandingPage()),
+        );
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error signing in: $e')),
@@ -241,11 +256,13 @@ class SignUpScreen extends StatelessWidget {
         });
       }
 
-      // Navigate to MainPage
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => MainPage(role: role)),
-      );
+      // Navigate to the appropriate landing page
+      if (role == 'Judge') {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const JudgeLandingPage()),
+        );
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error signing up: $e')),
@@ -329,24 +346,44 @@ class SignUpScreen extends StatelessWidget {
 }
 // --- End of SignUpScreen ---
 
-// --- Start of MainPage ---
-class MainPage extends StatelessWidget {
-  final String role;
-  const MainPage({super.key, required this.role});
+// --- Start of JudgeLandingPage ---
+class JudgeLandingPage extends StatelessWidget {
+  const JudgeLandingPage({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('$role Main Page'),
+        title: const Text('Judge Dashboard'),
       ),
-      body: Center(
+      body: const Center(
         child: Text(
-          'Welcome, $role!',
-          style: const TextStyle(fontSize: 24),
+          'Welcome to the Judge Dashboard!',
+          style: TextStyle(fontSize: 24),
         ),
       ),
     );
   }
 }
-// --- End of MainPage ---
+// --- End of JudgeLandingPage ---
+
+// --- Start of AdminLandingPage ---
+class AdminLandingPage extends StatelessWidget {
+  const AdminLandingPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Admin Dashboard'),
+      ),
+      body: const Center(
+        child: Text(
+          'Welcome to the Admin Dashboard!',
+          style: TextStyle(fontSize: 24),
+        ),
+      ),
+    );
+  }
+}
+// --- End of AdminLandingPage ---
