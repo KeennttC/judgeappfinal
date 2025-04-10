@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_options.dart';
+import 'adminpage.dart'; // Import the admin landing page
+import 'judgespage.dart'; // Import the judge landing page
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -193,32 +194,6 @@ class LoginScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (role == 'Judge') ...[
-                  const SizedBox(height: 24),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text("Don't have an account? "),
-                      GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => SignUpScreen(role: 'Judge'),
-                            ),
-                          );
-                        },
-                        child: const Text(
-                          "Sign Up",
-                          style: TextStyle(
-                            color: Colors.orange,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
               ],
             ),
           ),
@@ -228,162 +203,3 @@ class LoginScreen extends StatelessWidget {
   }
 }
 // --- End of LoginScreen ---
-
-// --- Start of SignUpScreen ---
-class SignUpScreen extends StatelessWidget {
-  final String role;
-  const SignUpScreen({super.key, required this.role});
-
-  Future<void> _signUpWithEmailAndPassword(
-      BuildContext context, TextEditingController emailController, TextEditingController passwordController) async {
-    try {
-      final email = emailController.text.trim();
-      final password = passwordController.text.trim();
-
-      final userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
-
-      // Save user data to Firestore
-      final user = userCredential.user;
-      if (user != null) {
-        final firestore = FirebaseFirestore.instance;
-        await firestore.collection('users').doc(user.uid).set({
-          'name': user.email, // Use email as name if displayName is not available
-          'email': user.email,
-          'role': role,
-        });
-      }
-
-      // Navigate to the appropriate landing page
-      if (role == 'Judge') {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const JudgeLandingPage()),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error signing up: $e')),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final emailController = TextEditingController();
-    final passwordController = TextEditingController();
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('$role Sign Up'),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Center(
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  "$role Sign Up",
-                  style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  "Create an account to continue as $role.",
-                  style: const TextStyle(fontSize: 16, color: Colors.black54),
-                ),
-                const SizedBox(height: 32),
-                TextField(
-                  controller: emailController,
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.email_outlined),
-                    labelText: "Email",
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: passwordController,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.lock_outline),
-                    labelText: "Password",
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 32),
-                SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orange,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    onPressed: () => _signUpWithEmailAndPassword(context, emailController, passwordController),
-                    child: const Text(
-                      "SIGN UP →",
-                      style: TextStyle(color: Colors.white, fontSize: 16),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-// --- End of SignUpScreen ---
-
-// --- Start of JudgeLandingPage ---
-class JudgeLandingPage extends StatelessWidget {
-  const JudgeLandingPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Judge Dashboard'),
-      ),
-      body: const Center(
-        child: Text(
-          'Welcome to the Judge Dashboard!',
-          style: TextStyle(fontSize: 24),
-        ),
-      ),
-    );
-  }
-}
-// --- End of JudgeLandingPage ---
-
-// --- Start of AdminLandingPage ---
-class AdminLandingPage extends StatelessWidget {
-  const AdminLandingPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Admin Dashboard'),
-      ),
-      body: const Center(
-        child: Text(
-          'Welcome to the Admin Dashboard!',
-          style: TextStyle(fontSize: 24),
-        ),
-      ),
-    );
-  }
-}
-// --- End of AdminLandingPage ---
