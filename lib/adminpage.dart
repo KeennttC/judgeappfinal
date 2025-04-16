@@ -19,6 +19,9 @@ class AdminLandingPage extends StatefulWidget {
 class _AdminLandingPageState extends State<AdminLandingPage> {
   final participantsRef = FirebaseFirestore.instance.collection('participants');
   final criteriaRef = FirebaseFirestore.instance.collection('criteria');
+  String searchQuery = '';
+  bool isLoading = false;
+  final ScrollController _scrollController = ScrollController();
 
   Future<double> _getTotalWeight() async {
     final snapshot = await criteriaRef.get();
@@ -26,6 +29,207 @@ class _AdminLandingPageState extends State<AdminLandingPage> {
       final weight = (doc['weight'] ?? 0).toDouble();
       return sum + weight;
     });
+  }
+
+  void _showLoadingIndicator(bool value) {
+    setState(() {
+      isLoading = value;
+    });
+  }
+
+  void _showErrorSnackbar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showConfirmationDialog({
+    required String title,
+    required String content,
+    required VoidCallback onConfirm,
+  }) {
+    showDialog(
+      context: context,
+      barrierDismissible: true, // Tap-to-dismiss
+      builder: (_) => AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () {
+            Navigator.pop(context);
+            onConfirm();
+          }, child: const Text('Confirm')),
+        ],
+      ),
+    );
+  }
+
+  void _editParticipantName(DocumentSnapshot doc) {
+    final nameCtrl = TextEditingController(text: doc['name']);
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => AlertDialog(
+        title: const Text('Edit Participant Name'),
+        content: TextField(
+          controller: nameCtrl,
+          decoration: const InputDecoration(labelText: 'Name'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              if (nameCtrl.text.trim().isEmpty) {
+                _showErrorSnackbar('Name cannot be empty');
+                return;
+              }
+              try {
+                await participantsRef.doc(doc.id).update({'name': nameCtrl.text.trim()});
+                Navigator.pop(context);
+                _showErrorSnackbar('Participant name updated');
+              } catch (e) {
+                _showErrorSnackbar('Error updating name: $e');
+              }
+            },
+            child: const Text('Update'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _resetParticipantScores(String id) {
+    _showConfirmationDialog(
+      title: 'Reset Scores',
+      content: 'Are you sure you want to reset scores for this participant?',
+      onConfirm: () async {
+        try {
+          await participantsRef.doc(id).update({'scores': {}});
+          _showErrorSnackbar('Scores reset successfully');
+        } catch (e) {
+          _showErrorSnackbar('Error resetting scores: $e');
+        }
+      },
+    );
+  }
+
+  Future<bool> _validateAllParticipantsHaveScores() async {
+    final participantsSnap = await participantsRef.get();
+    for (var doc in participantsSnap.docs) {
+      final scores = doc['scores'] ?? {};
+      if (scores.isEmpty) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void _finalizeScores() async {
+    final allHaveScores = await _validateAllParticipantsHaveScores();
+    if (!allHaveScores) {
+      _showErrorSnackbar('Cannot finalize scores. All participants must have scores.');
+      return;
+    }
+
+    final ranked = await _calculateRankings();
+    for (var r in ranked) {
+      await participantsRef.doc(r['id']).update({'finalScore': r['total'], 'rank': r['rank']});
+    }
+    _showErrorSnackbar('Scores finalized & ranked');
+  }
+
+  Future<List<Map<String, dynamic>>> _calculateRankings() async {
+    final criteriaSnap = await criteriaRef.get();
+    final participantsSnap = await participantsRef.get();
+
+    final weights = {
+      for (var doc in criteriaSnap.docs) doc['name']: doc['weight'] as double
+    };
+
+    final results = participantsSnap.docs.map((doc) {
+      final scores = Map<String, dynamic>.from(doc['scores'] ?? {});
+      double total = 0;
+      weights.forEach((k, w) {
+        total += (scores[k] ?? 0) * w;
+      });
+      return {
+        'id': doc.id,
+        'name': doc['name'],
+        'scores': scores,
+        'total': double.parse(total.toStringAsFixed(2))
+      };
+    }).toList();
+
+    results.sort((a, b) => b['total'].compareTo(a['total']));
+
+    double? lastScore;
+    int rank = 0;
+    int displayRank = 0;
+    for (var r in results) {
+      rank++;
+      if (r['total'] != lastScore) {
+        displayRank = rank;
+        lastScore = r['total'];
+      }
+      r['rank'] = displayRank;
+    }
+
+    return results;
+  }
+
+  void _exportResults(List<Map<String, dynamic>> results) async {
+    _showLoadingIndicator(true);
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final jsonFile = File('${dir.path}/results.json');
+      final csvFile = File('${dir.path}/results.csv');
+      final pdf = pw.Document();
+
+      await jsonFile.writeAsString(jsonEncode(results));
+
+      final headers = ['Rank', 'Name', ...results[0]['scores'].keys, 'Total'];
+      final csvContent = StringBuffer()..writeln(headers.join(','));
+      for (var r in results) {
+        final row = [r['rank'], r['name'], ...r['scores'].values, r['total'].toStringAsFixed(2)];
+        csvContent.writeln(row.join(','));
+      }
+      await csvFile.writeAsString(csvContent.toString());
+
+      pdf.addPage(
+        pw.Page(
+          build: (context) {
+            return pw.Table.fromTextArray(
+              headers: headers,
+              data: results.map((r) => [r['rank'], r['name'], ...r['scores'].values, r['total'].toStringAsFixed(2)]).toList(),
+            );
+          },
+        ),
+      );
+      final pdfFile = File('${dir.path}/results.pdf');
+      await pdfFile.writeAsBytes(await pdf.save());
+
+      Share.shareFiles([jsonFile.path, csvFile.path, pdfFile.path], text: 'Judging Results');
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Results exported successfully')));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error exporting results: $e')));
+    } finally {
+      _showLoadingIndicator(false);
+    }
+  }
+
+  Widget _buildWeightProgressBar() {
+    return FutureBuilder<double>(
+      future: _getTotalWeight(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const CircularProgressIndicator();
+        final totalWeight = snapshot.data!;
+        return Column(
+          children: [
+            LinearProgressIndicator(value: totalWeight, minHeight: 10),
+            Text('${(totalWeight * 100).toStringAsFixed(0)}% of 100% used'),
+          ],
+        );
+      },
+    );
   }
 
   void _addCriterionDialog() {
@@ -134,91 +338,15 @@ class _AdminLandingPageState extends State<AdminLandingPage> {
     );
   }
 
-  void _removeCriterion(String id) => criteriaRef.doc(id).delete();
-
-  void _exportResults(List<Map<String, dynamic>> results) async {
-    final dir = await getApplicationDocumentsDirectory();
-    final jsonFile = File('${dir.path}/results.json');
-    final csvFile = File('${dir.path}/results.csv');
-    final pdf = pw.Document();
-
-    await jsonFile.writeAsString(jsonEncode(results));
-
-    final headers = ['Rank', 'Name', ...results[0]['scores'].keys, 'Total'];
-    final csvContent = StringBuffer()..writeln(headers.join(','));
-    for (var r in results) {
-      final row = [r['rank'], r['name'], ...r['scores'].values, r['total'].toStringAsFixed(2)];
-      csvContent.writeln(row.join(','));
-    }
-    await csvFile.writeAsString(csvContent.toString());
-
-    pdf.addPage(
-      pw.Page(
-        build: (context) {
-          return pw.Table.fromTextArray(
-            headers: headers,
-            data: results.map((r) => [r['rank'], r['name'], ...r['scores'].values, r['total'].toStringAsFixed(2)]).toList(),
-          );
-        },
-      ),
+  void _removeCriterion(String id) {
+    _showConfirmationDialog(
+      title: 'Delete Criterion',
+      content: 'Are you sure you want to delete this criterion?',
+      onConfirm: () async {
+        await criteriaRef.doc(id).delete();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Criterion deleted')));
+      },
     );
-    final pdfFile = File('${dir.path}/results.pdf');
-    await pdfFile.writeAsBytes(await pdf.save());
-
-    Share.shareFiles([jsonFile.path, csvFile.path, pdfFile.path], text: 'Judging Results');
-  }
-
-  Future<List<Map<String, dynamic>>> _calculateRankings() async {
-    final criteriaSnap = await criteriaRef.get();
-    final participantsSnap = await participantsRef.get();
-
-    final weights = {
-      for (var doc in criteriaSnap.docs) doc['name']: doc['weight'] as double
-    };
-
-    final results = participantsSnap.docs.map((doc) {
-      final scores = Map<String, dynamic>.from(doc['scores'] ?? {});
-      double total = 0;
-      weights.forEach((k, w) {
-        total += (scores[k] ?? 0) * w;
-      });
-      return {
-        'id': doc.id,
-        'name': doc['name'],
-        'scores': scores,
-        'total': double.parse(total.toStringAsFixed(2))
-      };
-    }).toList();
-
-    results.sort((a, b) => b['total'].compareTo(a['total']));
-
-    double? lastScore;
-    int rank = 0;
-    int displayRank = 0;
-    for (var r in results) {
-      rank++;
-      if (r['total'] != lastScore) {
-        displayRank = rank;
-        lastScore = r['total'];
-      }
-      r['rank'] = displayRank;
-    }
-
-    return results;
-  }
-
-  void _finalizeScores() async {
-    final ranked = await _calculateRankings();
-    for (var r in ranked) {
-      await participantsRef.doc(r['id']).update({'finalScore': r['total'], 'rank': r['rank']});
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Scores finalized & ranked')),
-    );
-  }
-
-  void _resetParticipantScores(String id) {
-    participantsRef.doc(id).update({'scores': {}});
   }
 
   void _createJudgeAccountDialog() {
@@ -282,132 +410,167 @@ class _AdminLandingPageState extends State<AdminLandingPage> {
     );
   }
 
+  Widget _buildTabs() {
+    return DefaultTabController(
+      length: 3,
+      child: Column(
+        children: [
+          TabBar(
+            tabs: const [
+              Tab(text: 'Criteria'),
+              Tab(text: 'Participants'),
+              Tab(text: 'Judges'),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _buildCriteriaSection(),
+                _buildParticipantsSection(),
+                _buildJudgesSection(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCriteriaSection() {
+    return Column(
+      children: [
+        const SizedBox(height: 10),
+        const Text('Criteria Management', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        _buildWeightProgressBar(),
+        StreamBuilder<QuerySnapshot>(
+          stream: criteriaRef.snapshots(),
+          builder: (_, snapshot) {
+            if (!snapshot.hasData) return const CircularProgressIndicator();
+            final filteredDocs = snapshot.data!.docs.where((doc) {
+              final name = doc['name'].toString().toLowerCase();
+              return name.contains(searchQuery);
+            }).toList();
+            return SizedBox(
+              height: 100,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: filteredDocs.map((doc) {
+                  return Card(
+                    margin: const EdgeInsets.all(8),
+                    child: Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Column(children: [
+                        Text('${doc['name']} (${(doc['weight'] * 100).toStringAsFixed(0)}%)'),
+                        Row(
+                          children: [
+                            IconButton(icon: const Icon(Icons.edit), onPressed: () => _editCriterionDialog(doc)),
+                            IconButton(icon: const Icon(Icons.delete), onPressed: () => _removeCriterion(doc.id)),
+                          ],
+                        )
+                      ]),
+                    ),
+                  );
+                }).toList(),
+              ),
+            );
+          },
+        ),
+        ElevatedButton(onPressed: _addCriterionDialog, child: const Text('Add Criterion')),
+      ],
+    );
+  }
+
+  Widget _buildParticipantsSection() {
+    return Column(
+      children: [
+        const SizedBox(height: 10),
+        const Text('Participants', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: participantsRef.snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const CircularProgressIndicator();
+              final filteredDocs = snapshot.data!.docs.where((doc) {
+                final name = doc['name'].toString().toLowerCase();
+                return name.contains(searchQuery);
+              }).toList();
+              return ListView.builder(
+                controller: _scrollController,
+                itemCount: filteredDocs.length,
+                itemBuilder: (_, i) {
+                  final doc = filteredDocs[i];
+                  return ListTile(
+                    title: Text(doc['name']),
+                    subtitle: const Text('Tap to reset scores'),
+                    onTap: () => _resetParticipantScores(doc.id),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(icon: const Icon(Icons.edit), onPressed: () => _editParticipantName(doc)),
+                        IconButton(icon: const Icon(Icons.delete), onPressed: () => participantsRef.doc(doc.id).delete()),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        ElevatedButton(onPressed: _addParticipantDialog, child: const Text('Add Participant')),
+      ],
+    );
+  }
+
+  Widget _buildJudgesSection() {
+    return Column(
+      children: [
+        const SizedBox(height: 10),
+        const Text('Judges', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        ElevatedButton(onPressed: _createJudgeAccountDialog, child: const Text('Create Judge Account')),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Admin Dashboard')),
-      body: Column(
-        children: [
-          const SizedBox(height: 10),
-          const Text('Criteria Management', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          StreamBuilder<QuerySnapshot>(
-            stream: criteriaRef.snapshots(),
-            builder: (_, snapshot) {
-              if (!snapshot.hasData) return const CircularProgressIndicator();
-              return SizedBox(
-                height: 100,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  children: snapshot.data!.docs.map((doc) {
-                    return Card(
-                      margin: const EdgeInsets.all(8),
-                      child: Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: Column(children: [
-                          Text('${doc['name']} (${(doc['weight'] * 100).toStringAsFixed(0)}%)'),
-                          Row(
-                            children: [
-                              IconButton(icon: const Icon(Icons.edit), onPressed: () => _editCriterionDialog(doc)),
-                              IconButton(icon: const Icon(Icons.delete), onPressed: () => _removeCriterion(doc.id)),
-                            ],
-                          )
-                        ]), 
-                      ),
-                    );
-                  }).toList(),
-                ),
-              );
-            },
-          ),
-          ElevatedButton(onPressed: _addCriterionDialog, child: const Text('Add Criterion')),
-          const Divider(),
-          const Text('Participants', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: participantsRef.snapshots(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) return const CircularProgressIndicator();
-                final docs = snapshot.data!.docs;
-                return ListView.builder(
-                  itemCount: docs.length,
-                  itemBuilder: (_, i) {
-                    final doc = docs[i];
-                    return ListTile(
-                      title: Text(doc['name']),
-                      subtitle: const Text('Tap to reset scores'),
-                      onTap: () => _resetParticipantScores(doc.id),
-                      trailing: IconButton(icon: const Icon(Icons.delete), onPressed: () => participantsRef.doc(doc.id).delete()),
-                    );
-                  },
-                );
+      appBar: AppBar(
+        title: const Text('Admin Dashboard'),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(50),
+          child: Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              decoration: const InputDecoration(
+                hintText: 'Search participants or criteria...',
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) {
+                setState(() {
+                  searchQuery = value.toLowerCase();
+                });
               },
             ),
           ),
-          ElevatedButton(onPressed: _addParticipantDialog, child: const Text('Add Participant')),
-          ElevatedButton(onPressed: _createJudgeAccountDialog, child: const Text('Create Judge Account')),
-          ElevatedButton(
-            onPressed: () async {
-              final results = await _calculateRankings();
-              _exportResults(results);
-            },
-            child: const Text('Export Results'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final results = await _calculateRankings();
-              showDialog(
-                context: context,
-                builder: (_) => AlertDialog(
-                  title: const Text('Ranking and Scores'),
-                  content: SizedBox(
-                    width: double.maxFinite,
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(
-                        columns: [
-                          const DataColumn(label: Text('Rank')),
-                          const DataColumn(label: Text('Name')),
-                          ...results[0]['scores'].keys.map((c) => DataColumn(label: Text(c))).toList(),
-                          const DataColumn(label: Text('Total')),
-                        ],
-                        rows: results.map((r) {
-                          return DataRow(
-                            cells: [
-                              DataCell(Text('${r['rank']}')),
-                              DataCell(Text(r['name'])),
-                              ...r['scores'].values.map((s) => DataCell(Text('$s'))).toList(),
-                              DataCell(Text('${r['total'].toStringAsFixed(2)}')),
-                            ],
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                  ),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
-                    ElevatedButton(
-                      onPressed: () async {
-                        for (var r in results) {
-                          await participantsRef.doc(r['id']).update({
-                            'finalScore': r['total'],
-                            'rank': r['rank']
-                          });
-                        }
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Scores finalized & ranked')),
-                        );
-                      },
-                      child: const Text('Finalize'),
-                    ),
-                  ],
-                ),
-              );
-            },
-            child: const Text('View Rankings'),
-          ),
-          const SizedBox(height: 20),
+        ),
+      ),
+      body: Stack(
+        children: [
+          _buildTabs(),
+          if (isLoading)
+            const Center(
+              child: CircularProgressIndicator(),
+            ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _scrollController.animateTo(
+          0,
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOut,
+        ),
+        child: const Icon(Icons.arrow_upward),
       ),
     );
   }
