@@ -94,31 +94,29 @@ class LoginScreen extends StatelessWidget {
       final email = emailController.text.trim();
       final password = passwordController.text.trim();
 
-      // Check if the role is Admin and validate credentials
+      // Admin login using hardcoded credentials
       if (role == 'Admin') {
         if (email != 'ndkc@gmail.com' || password != 'ndkc12345') {
           throw Exception('Invalid admin credentials');
         }
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const AdminLandingPage()),
+        );
+        return;
       }
 
-      // Perform Firebase Authentication
+      // Judge login using Firebase Authentication
       final userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
 
-      // Navigate to the appropriate landing page based on the role
-      if (role == 'Admin') {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const AdminLandingPage()),
-        );
-      } else if (role == 'Judge') {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const JudgeLandingPage()),
-        );
-      }
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const JudgeLandingPage()),
+      );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error signing in: $e')),
