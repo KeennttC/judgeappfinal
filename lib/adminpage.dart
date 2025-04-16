@@ -352,7 +352,60 @@ class _AdminLandingPageState extends State<AdminLandingPage> {
             },
             child: const Text('Export Results'),
           ),
-          ElevatedButton(onPressed: _finalizeScores, child: const Text('Finalize & Rank')),
+          ElevatedButton(
+            onPressed: () async {
+              final results = await _calculateRankings();
+              showDialog(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: const Text('Ranking and Scores'),
+                  content: SizedBox(
+                    width: double.maxFinite,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        columns: [
+                          const DataColumn(label: Text('Rank')),
+                          const DataColumn(label: Text('Name')),
+                          ...results[0]['scores'].keys.map((c) => DataColumn(label: Text(c))).toList(),
+                          const DataColumn(label: Text('Total')),
+                        ],
+                        rows: results.map((r) {
+                          return DataRow(
+                            cells: [
+                              DataCell(Text('${r['rank']}')),
+                              DataCell(Text(r['name'])),
+                              ...r['scores'].values.map((s) => DataCell(Text('$s'))).toList(),
+                              DataCell(Text('${r['total'].toStringAsFixed(2)}')),
+                            ],
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+                    ElevatedButton(
+                      onPressed: () async {
+                        for (var r in results) {
+                          await participantsRef.doc(r['id']).update({
+                            'finalScore': r['total'],
+                            'rank': r['rank']
+                          });
+                        }
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Scores finalized & ranked')),
+                        );
+                      },
+                      child: const Text('Finalize'),
+                    ),
+                  ],
+                ),
+              );
+            },
+            child: const Text('View Rankings'),
+          ),
           const SizedBox(height: 20),
         ],
       ),
