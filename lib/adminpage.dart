@@ -484,7 +484,33 @@ class _AdminLandingPageState extends State<AdminLandingPage> {
     return Column(
       children: [
         const SizedBox(height: 10),
-        const Text('Participants', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const Text(
+          'Participants',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            ElevatedButton.icon(
+              onPressed: _addParticipantDialog,
+              icon: const Icon(Icons.person_add),
+              label: const Text('Add Participant'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () async {
+                final results = await _calculateRankings();
+                if (results.isEmpty) {
+                  _showErrorSnackbar('No participants to rank.');
+                  return;
+                }
+                _showRankingsDialog(results);
+              },
+              icon: const Icon(Icons.leaderboard),
+              label: const Text('View Rankings'),
+            ),
+          ],
+        ),
+        const Divider(),
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
             stream: participantsRef.snapshots(),
@@ -494,21 +520,40 @@ class _AdminLandingPageState extends State<AdminLandingPage> {
                 final name = doc['name'].toString().toLowerCase();
                 return name.contains(searchQuery);
               }).toList();
+              if (filteredDocs.isEmpty) {
+                return const Center(child: Text('No participants found.'));
+              }
               return ListView.builder(
                 controller: _scrollController,
                 itemCount: filteredDocs.length,
                 itemBuilder: (_, i) {
                   final doc = filteredDocs[i];
-                  return ListTile(
-                    title: Text(doc['name']),
-                    subtitle: const Text('Tap to reset scores'),
-                    onTap: () => _resetParticipantScores(doc.id),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(icon: const Icon(Icons.edit), onPressed: () => _editParticipantName(doc)),
-                        IconButton(icon: const Icon(Icons.delete), onPressed: () => participantsRef.doc(doc.id).delete()),
-                      ],
+                  return Card(
+                    margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
+                    child: ListTile(
+                      title: Text(doc['name']),
+                      subtitle: const Text('Tap to reset scores'),
+                      onTap: () => _resetParticipantScores(doc.id),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.blue),
+                            onPressed: () => _editParticipantName(doc),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () => _showConfirmationDialog(
+                              title: 'Delete Participant',
+                              content: 'Are you sure you want to delete this participant?',
+                              onConfirm: () async {
+                                await participantsRef.doc(doc.id).delete();
+                                _showErrorSnackbar('Participant deleted.');
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 },
@@ -516,8 +561,57 @@ class _AdminLandingPageState extends State<AdminLandingPage> {
             },
           ),
         ),
-        ElevatedButton(onPressed: _addParticipantDialog, child: const Text('Add Participant')),
       ],
+    );
+  }
+
+  void _showRankingsDialog(List<Map<String, dynamic>> results) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => AlertDialog(
+        title: const Text('Rankings'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              columns: [
+                const DataColumn(label: Text('Rank')),
+                const DataColumn(label: Text('Name')),
+                ...results[0]['scores'].keys.map((c) => DataColumn(label: Text(c))).toList(),
+                const DataColumn(label: Text('Total')),
+              ],
+              rows: results.map((r) {
+                return DataRow(
+                  cells: [
+                    DataCell(Text('${r['rank']}')),
+                    DataCell(Text(r['name'])),
+                    ...r['scores'].values.map((s) => DataCell(Text('$s'))).toList(),
+                    DataCell(Text('${r['total'].toStringAsFixed(2)}')),
+                  ],
+                );
+              }).toList(),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+          ElevatedButton(
+            onPressed: () async {
+              for (var r in results) {
+                await participantsRef.doc(r['id']).update({
+                  'finalScore': r['total'],
+                  'rank': r['rank'],
+                });
+              }
+              Navigator.pop(context);
+              _showErrorSnackbar('Scores finalized & ranked.');
+            },
+            child: const Text('Finalize Scores'),
+          ),
+        ],
+      ),
     );
   }
 
